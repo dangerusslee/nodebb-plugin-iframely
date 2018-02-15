@@ -34,6 +34,8 @@
   },
   "dependencies": {
     "lru-cache": "^2.7.0",
-    "moment": "^2.20.1"
+    "moment": "^2.20.1",
+    "cacheman-mongo": "^1.0.3",
+    "cacheman": "^2.2.1"
   }
 }

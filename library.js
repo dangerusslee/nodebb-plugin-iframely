@@ -10,11 +10,16 @@ var meta = require.main.require('./src/meta');
 
 var postCache = module.parent.require('./posts/cache');
 var LRU = require('lru-cache');
+var Cache = require('./lib/cache');
+
+
 var url = require('url');
 var moment = require('moment');
 var crypto = require('crypto');
 
-var ONE_DAY_MS = 1000*60*60*24;
+
+var ONE_DAY_S = 60*60*24;
+var ONE_DAY_MS = 1000*ONE_DAY_S;
 var DEFAULT_CACHE_MAX_AGE_DAYS = 1;
 
 var iframely = {
@@ -47,9 +52,7 @@ iframely.init = function(params, callback) {
 			cacheMaxAgeDays = DEFAULT_CACHE_MAX_AGE_DAYS;
 		}
 
-		iframely.cache = LRU({
-			maxAge: cacheMaxAgeDays * ONE_DAY_MS
-		});
+		iframely.cache=Cache(cacheMaxAgeDays * ONE_DAY_S);
 
 		callback();
 	});
