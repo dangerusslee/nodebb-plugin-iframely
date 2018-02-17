@@ -52,8 +52,8 @@ iframely.init = function(params, callback) {
 			cacheMaxAgeDays = DEFAULT_CACHE_MAX_AGE_DAYS;
 		}
 
-		iframely.cache=Cache(cacheMaxAgeDays * ONE_DAY_S);
-
+		iframely.cache=new Cache({ttl:cacheMaxAgeDays * ONE_DAY_S});
+		iframely.errorCache=new LRU({maxAge: 1000 * 60 * 60});
 		callback();
 	});
 };
@@ -305,68 +305,79 @@ iframely.replace = function(raw, options, callback) {
 		});
 	}
 };
-
+iframely.processError = function(error, callback) {
+	
+}
 iframely.query = function(data, callback) {
-	if (iframely.cache.has(data.url)) {
-		winston.verbose('[plugin/iframely] Retrieving \'' + data.url + '\' from cache...');
-		setImmediate(function() {
-			try {
-				callback(null, {
-					url: data.url,
-					match: data.match,
-					embed: iframely.cache.get(data.url),
-					fromCache: true
-				});
-			} catch(ex) {
-				winston.error('[plugin/iframely] Could not parse embed! ' + ex + '. Url: ' + data.url);
+	try {
+		iframely.cache.get(data.url, function (error, value) {
+			if (error) {
+				winston.error('[plugin/iframely] error getting from cache ' + error + '. Url: ' + data.url);
 			}
-		});
-	} else {
-		winston.verbose('[plugin/iframely] Querying \'' + data.url + '\' via Iframely...')
-		if (iframely.config.endpoint || iframely.config.apikey) {
-			var useAPI = false;
-			var fallbackURL;
-			if (iframely.config.apikey && !iframely.config.endpoint) {
-				//Only api key is available, so lets use that
-				useAPI=true;
+			if (value){
+				winston.verbose('[plugin/iframely] Got \'' + data.url + '\' from cache...');
+					callback(null, {
+						url: data.url,
+						match: data.match,
+						embed: value,
+						fromCache: true
+					});
 			}
-			else if (iframely.config.endpoint && !iframely.config.apikey) {
-				var custom_endpoint = /^https?:\/\//i.test(iframely.config.endpoint);
-				//backward compatibility, check if api key is in endpoint
-				if (!custom_endpoint) {
-					useAPI = true;
-					iframely.config.apikey = iframely.config.endpoint;
-				}
+			else if (iframely.errorCache.has(data.url)) {
+				winston.verbose('[plugin/iframely] Got \'' + data.url + '\' from error cache...');
+				return callback();
 			}
 			else {
-				//Both are available and there is no whitelist defined, so we use the api for everything
-				if (!iframely.config.whitelist) {
-					useAPI = true;
-				}
-				else {
-					//We have an apikey and a whitelist
-					if (hostInWhitelist(data.host)) {
-						useAPI = true;
+				winston.verbose('[plugin/iframely] Querying \'' + data.url + '\' via Iframely...')
+				if (iframely.config.endpoint || iframely.config.apikey) {
+					var useAPI = false;
+					var fallbackURL;
+					if (iframely.config.apikey && !iframely.config.endpoint) {
+						//Only api key is available, so lets use that
+						useAPI=true;
 					}
+					else if (iframely.config.endpoint && !iframely.config.apikey) {
+						var custom_endpoint = /^https?:\/\//i.test(iframely.config.endpoint);
+						//backward compatibility, check if api key is in endpoint
+						if (!custom_endpoint) {
+							useAPI = true;
+							iframely.config.apikey = iframely.config.endpoint;
+						}
+					}
+					else {
+						//Both are available and there is no whitelist defined, so we use the api for everything
+						if (!iframely.config.whitelist) {
+							useAPI = true;
+						}
+						else {
+							//We have an apikey and a whitelist
+							if (hostInWhitelist(data.host)) {
+								useAPI = true;
+							}
+						}
+					}
+					var iframelyAPI = useAPI ? iframely['apiBase'] + '&api_key=' + iframely.config.apikey : iframely.config.endpoint;
+					iframelyAPI += (iframelyAPI.indexOf('?') > -1 ? '&' : '?') + 'url=' + encodeURIComponent(data.url);
+
+					if (!useAPI) {
+						iframelyAPI += '&group=true';
+					}
+					else if (iframely.config.endpoint) {
+						fallbackURL =  iframely.config.endpoint;
+						fallbackURL += (fallbackURL.indexOf('?') > -1 ? '&' : '?') + 'url=' + encodeURIComponent(data.url);
+						fallbackURL += '&group=true';
+					}
+					processRequest(iframelyAPI, fallbackURL, data, callback);
+
+				} else {
+					winston.error('[plugin/iframely] No API key or endpoint configured, skipping Iframely');
+					callback();
 				}
 			}
-			var iframelyAPI = useAPI ? iframely['apiBase'] + '&api_key=' + iframely.config.apikey : iframely.config.endpoint;
-			iframelyAPI += (iframelyAPI.indexOf('?') > -1 ? '&' : '?') + 'url=' + encodeURIComponent(data.url);
-
-			if (!useAPI) {
-				iframelyAPI += '&group=true';
-			}
-			else if (iframely.config.endpoint) {
-				fallbackURL =  iframely.config.endpoint;
-				fallbackURL += (fallbackURL.indexOf('?') > -1 ? '&' : '?') + 'url=' + encodeURIComponent(data.url);
-				fallbackURL += '&group=true';
-			}
-			processRequest(iframelyAPI, fallbackURL, data, callback);
-
-		} else {
-			winston.error('[plugin/iframely] No API key or endpoint configured, skipping Iframely');
-			callback();
-		}
+		});
+	} catch(ex) {
+		winston.error('[plugin/iframely] Could not parse embed! ' + ex + '. Url: ' + data.url);
+		callback();
 	}
 };
 
@@ -410,9 +421,16 @@ function processRequest(iframelyAPI, fallBackURL, data, callback) {
 			} else {
 				if (body && body.status === 404) {
 					winston.verbose('[plugin/iframely] not found: ' + data.url);
+					iframely.errorCache.set(data.url, body);
+					return callback();
+				}
+				if (body && body.error && body.error.code === 408) {
+					winston.verbose('[plugin/iframely] timed out ' + data.url);
+					iframely.errorCache.set(data.url, body);
 					return callback();
 				}
 				winston.info('[plugin/iframely] iframely responded with error: ' + JSON.stringify(body) + '. Url: ' + data.url + '. Api call: ' + iframelyAPI);
+				
 				if (fallBackURL) {
 					processRequest(fallBackURL, null, data, callback);
 				}
