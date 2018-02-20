@@ -434,7 +434,10 @@ function processRequest(iframelyAPI, fallBackURL, data, callback) {
 				if (fallBackURL) {
 					processRequest(fallBackURL, null, data, callback);
 				}
-				callback();
+				else {
+					callback();
+				}
+				
 			}
 		}
 	});
