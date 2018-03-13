@@ -311,7 +311,20 @@ iframely.query = function(data, callback) {
 			winston.info('[plugin/iframely] Querying cache for ' + data.url);
 			// Try getting the data from cache
 			iframely.cache.get(data.url,next);
-		},
+		},/*
+		function getDataFromCacheNoAttribution(next) {
+			var target = url.parse(data.url, true);
+			if  (target.host.toLowerCase().indexOf("amazon.com") !== -1 ) {
+				delete target.query["tag"];
+				delete target.query["ascsubtag"];
+				delete target.query["ref"];
+				var myUrl = url.format(target);
+			}
+			iframely.cache.get(data.url,next);
+			winston.info('[plugin/iframely] Querying cache for ' + data.url);
+			// Try getting the data from cache
+			
+		},*/
 		function getDataFromErrorCache(next) {
 			winston.info('[plugin/iframely] Querying errorCache for ' + data.url)
 			//try getting the data from errorcache
